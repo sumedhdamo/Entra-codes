@@ -1,2 +1,2 @@
 # Entra-codes
-Creating a aprivate repo for my useful entra codes
+Creating a a private repo for my useful entra codes
