@@ -1,0 +1,26 @@
+$OutFile = "C:\Licenses\Damo.csv"
+
+Connect-MgGraph -Scopes "User.Read.All","Directory.Read.All"
+
+$users = Get-MgUser -All -Property "id,displayName,userPrincipalName,accountEnabled,userType,createdDateTime"
+
+$result = foreach ($u in $users) {
+    $licDetails = Get-MgUserLicenseDetail -UserId $u.Id
+
+    $assignedSkus = $licDetails | ForEach-Object {
+        # Works across module versions
+        if ($_.SkuPartNumber) { $_.SkuPartNumber } else { $_.SkuId }
+    }
+
+    [pscustomobject]@{
+        DisplayName       = $u.DisplayName
+        UserPrincipalName = $u.UserPrincipalName
+        UserType          = $u.UserType
+        AccountEnabled    = $u.AccountEnabled
+        CreatedDateTime   = $u.CreatedDateTime
+        Licenses          = ($assignedSkus -join "; ")
+    }
+}
+
+$result | Sort-Object UserPrincipalName | Export-Csv -NoTypeInformation -Encoding UTF8 $OutFile
+Write-Host "Exported $($result.Count) users to $OutFile"
