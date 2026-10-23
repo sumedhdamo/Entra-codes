@@ -1,0 +1,165 @@
+# ============================================================
+# ENTRA APP REGISTRATION SECURITY INVENTORY
+# Read-only audit. Does NOT modify Entra objects or credentials.
+# ============================================================
+$ErrorActionPreference = "Continue"
+# Output folder
+$OutputFolder = Join-Path (Get-Location) "AppRegistrationAudit"
+New-Item -ItemType Directory -Path $OutputFolder -Force | Out-Null
+# 1. Fetch app registrations and service principals
+Write-Host "Fetching application registrations..." -ForegroundColor Cyan
+$apps = Get-MgApplication -All -Property `
+   Id,AppId,DisplayName,CreatedDateTime,SignInAudience,
+   PublisherDomain,VerifiedPublisher,Owners,
+   PasswordCredentials,KeyCredentials,RequiredResourceAccess,
+   Web,PublicClient,Spa,IsFallbackPublicClient
+Write-Host "Fetching service principals for permission-name resolution..." -ForegroundColor Cyan
+$servicePrincipals = Get-MgServicePrincipal -All -Property `
+   Id,AppId,DisplayName,AppRoles,OAuth2PermissionScopes
+# Map API application IDs to their service principals
+$resourceMap = @{}
+foreach ($sp in $servicePrincipals) {
+   if ($sp.AppId) {
+       $resourceMap[$sp.AppId] = $sp
+   }
+}
+# 2. Application registration inventory
+$appReport = [System.Collections.Generic.List[object]]::new()
+# 3. Requested API permission inventory
+$permissionReport = [System.Collections.Generic.List[object]]::new()
+# 4. Credential metadata inventory
+$credentialReport = [System.Collections.Generic.List[object]]::new()
+foreach ($app in $apps) {
+   Write-Host "Processing: $($app.DisplayName)" -ForegroundColor Gray
+   # Owners
+   $ownerNames = @()
+   try {
+       $owners = Get-MgApplicationOwner -ApplicationId $app.Id -All `
+           -ErrorAction Stop
+       foreach ($owner in $owners) {
+           $name = $owner.AdditionalProperties["displayName"]
+           $upn = $owner.AdditionalProperties["userPrincipalName"]
+           if ($name) {
+               if ($upn) {
+                   $ownerNames += "$name ($upn)"
+               } else {
+                   $ownerNames += $name
+               }
+           } else {
+               $ownerNames += "$($owner.Id) [name unavailable]"
+           }
+       }
+   }
+   catch {
+       $ownerNames += "Lookup failed"
+   }
+   # Basic application details
+   $appReport.Add([PSCustomObject]@{
+       DisplayName            = $app.DisplayName
+       AppId                  = $app.AppId
+       ObjectId               = $app.Id
+       CreatedDateTime        = $app.CreatedDateTime
+       SignInAudience         = $app.SignInAudience
+       PublisherDomain        = $app.PublisherDomain
+       VerifiedPublisher      = $app.VerifiedPublisher.DisplayName
+       Owners                 = $ownerNames -join "; "
+       OwnerCount             = $ownerNames.Count
+       IsFallbackPublicClient = $app.IsFallbackPublicClient
+       WebRedirectUris        = ($app.Web.RedirectUris -join "; ")
+       PublicClientRedirectUris = ($app.PublicClient.RedirectUris -join "; ")
+       SpaRedirectUris        = ($app.Spa.RedirectUris -join "; ")
+       RequestedResourceCount = @($app.RequiredResourceAccess).Count
+       PasswordCredentialCount = @($app.PasswordCredentials).Count
+       CertificateCount       = @($app.KeyCredentials).Count
+   })
+   # Resolve requested API permissions
+   foreach ($resource in $app.RequiredResourceAccess) {
+       $resourceSp = $resourceMap[$resource.ResourceAppId]
+       $resourceName = if ($resourceSp) {
+           $resourceSp.DisplayName
+       } else {
+           "Resource not resolved"
+       }
+       foreach ($permission in $resource.ResourceAccess) {
+           $permissionName = "Permission ID not resolved"
+           $permissionType = $permission.Type
+           if ($resourceSp) {
+               if ($permission.Type -eq "Role") {
+                   $match = $resourceSp.AppRoles |
+                       Where-Object { $_.Id -eq $permission.Id } |
+                       Select-Object -First 1
+                   if ($match) { $permissionName = $match.Value }
+               }
+               elseif ($permission.Type -eq "Scope") {
+                   $match = $resourceSp.OAuth2PermissionScopes |
+                       Where-Object { $_.Id -eq $permission.Id } |
+                       Select-Object -First 1
+                   if ($match) { $permissionName = $match.Value }
+               }
+           }
+           $permissionReport.Add([PSCustomObject]@{
+               ApplicationName = $app.DisplayName
+               AppId            = $app.AppId
+               ObjectId         = $app.Id
+               ResourceName     = $resourceName
+               ResourceAppId    = $resource.ResourceAppId
+               PermissionType   = $permissionType
+               PermissionName   = $permissionName
+               PermissionId     = $permission.Id
+           })
+       }
+   }
+   # Client secrets: metadata only; secret values are never exported
+   foreach ($credential in $app.PasswordCredentials) {
+       $credentialReport.Add([PSCustomObject]@{
+           ApplicationName = $app.DisplayName
+           AppId            = $app.AppId
+           ObjectId         = $app.Id
+           CredentialType   = "Client secret"
+           CredentialName   = $credential.DisplayName
+           KeyId            = $credential.KeyId
+           StartDateTime    = $credential.StartDateTime
+           EndDateTime      = $credential.EndDateTime
+           Status           = if (-not $credential.EndDateTime) {
+               "No expiry returned - investigate"
+           } elseif ($credential.EndDateTime -lt (Get-Date).ToUniversalTime()) {
+               "Expired"
+           } elseif ($credential.EndDateTime -lt (Get-Date).ToUniversalTime().AddDays(30)) {
+               "Expires within 30 days"
+           } else {
+               "Not expired"
+           }
+       })
+   }
+   # Certificates: metadata only; private keys are never exported
+   foreach ($credential in $app.KeyCredentials) {
+       $credentialReport.Add([PSCustomObject]@{
+           ApplicationName = $app.DisplayName
+           AppId            = $app.AppId
+           ObjectId         = $app.Id
+           CredentialType   = "Certificate"
+           CredentialName   = $credential.DisplayName
+           KeyId            = $credential.KeyId
+           StartDateTime    = $credential.StartDateTime
+           EndDateTime      = $credential.EndDateTime
+           Status           = if (-not $credential.EndDateTime) {
+               "No expiry returned - investigate"
+           } elseif ($credential.EndDateTime -lt (Get-Date).ToUniversalTime()) {
+               "Expired"
+           } elseif ($credential.EndDateTime -lt (Get-Date).ToUniversalTime().AddDays(30)) {
+               "Expires within 30 days"
+           } else {
+               "Not expired"
+           }
+       })
+   }
+}
+# Export reports locally
+$appReport | Export-Csv (Join-Path $OutputFolder "AppRegistrations.csv") -NoTypeInformation
+$permissionReport | Export-Csv (Join-Path $OutputFolder "RequestedPermissions.csv") -NoTypeInformation
+$credentialReport | Export-Csv (Join-Path $OutputFolder "CredentialInventory.csv") -NoTypeInformation
+Write-Host "`nAudit completed." -ForegroundColor Green
+Write-Host "Applications: $($appReport.Count)"
+Write-Host "Requested permission entries: $($permissionReport.Count)"
+Write-Host "Credential records: $($credentialReport.Count)"
+Write-Host "Reports saved to: $OutputFolder"

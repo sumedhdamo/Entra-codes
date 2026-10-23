@@ -1,0 +1,86 @@
+# Get role definitions
+$roles = Get-MgRoleManagementDirectoryRoleDefinition -All
+$roleMap = @{}
+foreach ($r in $roles) {
+   $roleMap[$r.Id] = $r.DisplayName
+}
+# Get active and eligible schedule instances
+$active = Get-MgRoleManagementDirectoryRoleAssignmentScheduleInstance -All
+$eligible = Get-MgRoleManagementDirectoryRoleEligibilityScheduleInstance -All
+# Cache principal details
+$principalCache = @{}
+function Resolve-Principal {
+   param([string]$Id)
+   if ($principalCache.ContainsKey($Id)) {
+       return $principalCache[$Id]
+   }
+   $result = [PSCustomObject]@{
+       Name = "Unknown"
+       UPN  = ""
+       Type = "Unknown"
+   }
+   try {
+       $obj = Get-MgUser -UserId $Id -ErrorAction Stop
+       $result = [PSCustomObject]@{
+           Name = $obj.DisplayName
+           UPN  = $obj.UserPrincipalName
+           Type = "User"
+       }
+   }
+   catch {
+       try {
+           $obj = Get-MgGroup -GroupId $Id -ErrorAction Stop
+           $result = [PSCustomObject]@{
+               Name = $obj.DisplayName
+               UPN  = ""
+               Type = "Group"
+           }
+       }
+       catch {
+           try {
+               $obj = Get-MgServicePrincipal -ServicePrincipalId $Id -ErrorAction Stop
+               $result = [PSCustomObject]@{
+                   Name = $obj.DisplayName
+                   UPN  = $obj.AppId
+                   Type = "ServicePrincipal"
+               }
+           }
+           catch {}
+       }
+   }
+   $principalCache[$Id] = $result
+   return $result
+}
+$report = @(
+   foreach ($item in $active) {
+       $p = Resolve-Principal $item.PrincipalId
+       [PSCustomObject]@{
+           Name           = $p.Name
+           UPN            = $p.UPN
+           ObjectType     = $p.Type
+           ObjectId       = $item.PrincipalId
+           Role           = $roleMap[$item.RoleDefinitionId]
+           AccessType     = "Active"
+           AssignmentType = $item.AssignmentType
+           StartDate      = $item.StartDateTime
+           EndDate        = $item.EndDateTime
+           Scope          = $item.DirectoryScopeId
+       }
+   }
+   foreach ($item in $eligible) {
+       $p = Resolve-Principal $item.PrincipalId
+       [PSCustomObject]@{
+           Name           = $p.Name
+           UPN            = $p.UPN
+           ObjectType     = $p.Type
+           ObjectId       = $item.PrincipalId
+           Role           = $roleMap[$item.RoleDefinitionId]
+           AccessType     = "Eligible"
+           AssignmentType = $item.MemberType
+           StartDate      = $item.StartDateTime
+           EndDate        = $item.EndDateTime
+           Scope          = $item.DirectoryScopeId
+       }
+   }
+)
+$report | Export-Csv ".\EntraRoleAssignments.csv" -NoTypeInformation

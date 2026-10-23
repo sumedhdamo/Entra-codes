@@ -1,0 +1,82 @@
+$users = Get-MgUser -All -Property Id,DisplayName,UserPrincipalName
+$groups = Get-MgGroup -All -Property Id,DisplayName
+$roles = Get-MgRoleManagementDirectoryRoleDefinition -All
+$userMap = @{}
+foreach ($u in $users) {
+   $userMap[$u.Id] = "$($u.DisplayName) [$($u.UserPrincipalName)]"
+}
+$groupMap = @{}
+foreach ($g in $groups) {
+   $groupMap[$g.Id] = $g.DisplayName
+}
+$roleMap = @{}
+foreach ($r in $roles) {
+   $roleMap[$r.TemplateId] = $r.DisplayName
+}
+$policies = Get-MgIdentityConditionalAccessPolicy -All
+function Resolve-Names($ids, $map) {
+   if (-not $ids) { return "None" }
+   return (($ids | ForEach-Object {
+       if ($map.ContainsKey($_)) { $map[$_] }
+       elseif ($_ -eq "All") { "All users" }
+       elseif ($_ -eq "GuestsOrExternalUsers") { "Guests or external users" }
+       else { $_ }
+   }) -join "; ")
+}
+$report = foreach ($p in $policies) {
+   [PSCustomObject]@{
+       PolicyName             = $p.DisplayName
+       State                  = $p.State
+       IncludedUsers          = Resolve-Names $p.Conditions.Users.IncludeUsers $userMap
+       ExcludedUsers          = Resolve-Names $p.Conditions.Users.ExcludeUsers $userMap
+       IncludedGroups         = Resolve-Names $p.Conditions.Users.IncludeGroups $groupMap
+       ExcludedGroups         = Resolve-Names $p.Conditions.Users.ExcludeGroups $groupMap
+       IncludedRoles          = Resolve-Names $p.Conditions.Users.IncludeRoles $roleMap
+       ExcludedRoles          = Resolve-Names $p.Conditions.Users.ExcludeRoles $roleMap
+       IncludedApplications   = $p.Conditions.Applications.IncludeApplications -join "; "
+       ExcludedApplications   = $p.Conditions.Applications.ExcludeApplications -join "; "
+       IncludedLocations      = $p.Conditions.Locations.IncludeLocations -join "; "
+       ExcludedLocations      = $p.Conditions.Locations.ExcludeLocations -join "; "
+       ClientAppTypes         = $p.Conditions.ClientAppTypes -join "; "
+       GrantControls          = $p.GrantControls.BuiltInControls -join "; "
+       GrantOperator          = $p.GrantControls.Operator
+       AuthenticationStrength = $p.GrantControls.AuthenticationStrength.DisplayName
+       SessionControls        = $p.SessionControls | ConvertTo-Json -Depth 8 -Compress
+   }
+}
+$report | Export-Csv ".\ConditionalAccessPolicies_Readable.csv" -NoTypeInformation
+
+-----------------------------------------------------------------------------------------------------------------------------
+
+# Get applications and named locations
+$apps = Get-MgServicePrincipal -All -Property Id,DisplayName,AppId
+$locations = Get-MgIdentityConditionalAccessNamedLocation -All
+$appMap = @{}
+foreach ($app in $apps) {
+   $appMap[$app.AppId] = $app.DisplayName
+   $appMap[$app.Id] = $app.DisplayName
+}
+$locationMap = @{}
+foreach ($loc in $locations) {
+   $locationMap[$loc.Id] = $loc.DisplayName
+}
+function Resolve-ReferenceNames($ids, $map) {
+   if (-not $ids) { return "None" }
+   ($ids | ForEach-Object {
+       if ($_ -eq "All") { "All" }
+       elseif ($map.ContainsKey($_)) { $map[$_] }
+       else { $_ }
+   }) -join "; "
+}
+$policies = Get-MgIdentityConditionalAccessPolicy -All
+$report = foreach ($p in $policies) {
+   [PSCustomObject]@{
+       PolicyName           = $p.DisplayName
+       State                = $p.State
+       IncludedApplications = Resolve-ReferenceNames $p.Conditions.Applications.IncludeApplications $appMap
+       ExcludedApplications = Resolve-ReferenceNames $p.Conditions.Applications.ExcludeApplications $appMap
+       IncludedLocations    = Resolve-ReferenceNames $p.Conditions.Locations.IncludeLocations $locationMap
+       ExcludedLocations    = Resolve-ReferenceNames $p.Conditions.Locations.ExcludeLocations $locationMap
+   }
+}
+$report | Export-Csv ".\ConditionalAccessPolicyDetails.csv" -NoTypeInformation

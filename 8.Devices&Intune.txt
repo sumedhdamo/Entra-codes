@@ -1,0 +1,54 @@
+$devices = Get-MgDevice -All -Property Id,DisplayName,DeviceId,OperatingSystem,OperatingSystemVersion,TrustType,IsManaged,IsCompliant,AccountEnabled,ApproximateLastSignInDateTime,RegistrationDateTime
+$report = $devices | Select-Object `
+   DisplayName,
+   DeviceId,
+   Id,
+   OperatingSystem,
+   OperatingSystemVersion,
+   TrustType,
+   IsManaged,
+   IsCompliant,
+   AccountEnabled,
+   RegistrationDateTime,
+   ApproximateLastSignInDateTime
+$report | Export-Csv ".\EntraDevices.csv" -NoTypeInformation
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------
+$devices = Get-MgDeviceManagementManagedDevice -All
+$report = foreach ($d in $devices) {
+   [PSCustomObject]@{
+       DeviceName            = $d.DeviceName
+       PrimaryUserDisplayName = $d.UserDisplayName
+       UserPrincipalName     = $d.UserPrincipalName
+       OperatingSystem       = $d.OperatingSystem
+       OSVersion             = $d.OsVersion
+       Manufacturer          = $d.Manufacturer
+       Model                 = $d.Model
+       SerialNumber          = $d.SerialNumber
+       ComplianceState       = $d.ComplianceState
+       ManagementState       = $d.ManagementState
+       ManagementAgent       = $d.ManagementAgent
+       EnrollmentType        = $d.EnrollmentType
+       EnrolledDateTime      = $d.EnrolledDateTime
+       LastSyncDateTime      = $d.LastSyncDateTime
+       AzureAdDeviceId       = $d.AzureAdDeviceId
+       IntuneRecordId        = $d.Id
+   }
+}
+$report | Export-Csv ".\IntuneManagedDevices.csv" -NoTypeInformation
+
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+$policies = Get-MgDeviceManagementDeviceCompliancePolicy -All
+$report = foreach ($p in $policies) {
+   [PSCustomObject]@{
+       PolicyName       = $p.DisplayName
+       PolicyId         = $p.Id
+       PolicyType       = $p.AdditionalProperties.'@odata.type'
+       CreatedDateTime  = $p.CreatedDateTime
+       LastModified     = $p.LastModifiedDateTime
+       Description      = $p.Description
+       Version          = $p.Version
+   }
+}
+$report | Export-Csv ".\IntuneCompliancePolicies.csv" -NoTypeInformation

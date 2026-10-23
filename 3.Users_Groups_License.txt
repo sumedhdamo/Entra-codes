@@ -1,0 +1,57 @@
+$users = Get-MgUser -All -Property Id,DisplayName,UserPrincipalName,UserType,AccountEnabled,Department,JobTitle,CreatedDateTime
+$users | Select-Object `
+   DisplayName,
+   UserPrincipalName,
+   Id,
+   UserType,
+   AccountEnabled,
+   Department,
+   JobTitle,
+   CreatedDateTime |
+Export-Csv ".\Users.csv" -NoTypeInformation
+
+-------------------------------------------------------------------------------------------------
+
+$membershipReport = foreach ($user in $users) {
+   Get-MgUserMemberOfAsGroup -UserId $user.Id -All |
+   Select-Object @{
+       Name='UserDisplayName'; Expression={$user.DisplayName}
+   }, @{
+       Name='UserPrincipalName'; Expression={$user.UserPrincipalName}
+   }, @{
+       Name='UserId'; Expression={$user.Id}
+   }, @{
+       Name='GroupDisplayName'; Expression={$_.DisplayName}
+   }, @{
+       Name='GroupId'; Expression={$_.Id}
+   }
+}
+$membershipReport |
+Export-Csv ".\UserGroupMemberships.csv" -NoTypeInformation
+
+--------------------------------------------------------------------------------------------------
+
+$skus = Get-MgSubscribedSku -All
+$licenseReport = foreach ($user in (Get-MgUser -All -Property Id,DisplayName,UserPrincipalName,AssignedLicenses)) {
+   foreach ($license in $user.AssignedLicenses) {
+       $sku = $skus | Where-Object { $_.SkuId -eq $license.SkuId } |
+           Select-Object -First 1
+       [PSCustomObject]@{
+           DisplayName       = $user.DisplayName
+           UserPrincipalName = $user.UserPrincipalName
+           UserId            = $user.Id
+           LicenseName       = $sku.SkuPartNumber
+           SkuId             = $license.SkuId
+       }
+   }
+}
+$licenseReport | Export-Csv ".\UserLicenses.csv" -NoTypeInformation
+
+------------------------------------------------------------------------------------------
+
+Get-MgSubscribedSku -All |
+Select-Object SkuPartNumber, SkuId,
+   ConsumedUnits,
+   @{N='Enabled';E={$_.PrepaidUnits.Enabled}},
+   @{N='Available';E={$_.PrepaidUnits.Enabled - $_.ConsumedUnits}} |
+Export-Csv ".\TenantLicenseInventory.csv" -NoTypeInformation

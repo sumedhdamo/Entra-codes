@@ -1,0 +1,29 @@
+$apps = Get-MgServicePrincipal -All -Property `
+   Id,DisplayName,AppId,AccountEnabled,ServicePrincipalType,
+   AppRoleAssignmentRequired,PublisherName,CreatedDateTime,
+   SignInAudience,VerifiedPublisher
+$report = foreach ($app in $apps) {
+   $owners = Get-MgServicePrincipalOwner -ServicePrincipalId $app.Id -All `
+       -ErrorAction SilentlyContinue
+   $ownerNames = foreach ($owner in $owners) {
+       if ($owner.AdditionalProperties.displayName) {
+           $owner.AdditionalProperties.displayName
+       }
+       else {
+           $owner.Id
+       }
+   }
+   [PSCustomObject]@{
+       DisplayName              = $app.DisplayName
+       AppId                    = $app.AppId
+       ObjectId                 = $app.Id
+       ServicePrincipalType     = $app.ServicePrincipalType
+       Enabled                  = $app.AccountEnabled
+       AssignmentRequired       = $app.AppRoleAssignmentRequired
+       Publisher                = $app.PublisherName
+       VerifiedPublisher        = $app.VerifiedPublisher.DisplayName
+       CreatedDateTime          = $app.CreatedDateTime
+       Owners                   = $ownerNames -join "; "
+   }
+}
+$report | Export-Csv ".\EnterpriseApplications.csv" -NoTypeInformation

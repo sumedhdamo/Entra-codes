@@ -1,0 +1,32 @@
+Get-MgPolicyAuthenticationMethodPolicy |
+   Select-Object Id, DisplayName, Description,
+       @{N='MigrationState';E={$_.MigrationState}} |
+   Export-Csv ".\AuthenticationMethodPolicy.csv" -NoTypeInformation
+
+---------------------------------------------------------------------------
+
+$policy = Get-MgPolicyAuthenticationMethodPolicy
+$groups = Get-MgGroup -All -Property Id,DisplayName
+$groupMap = @{}
+foreach ($g in $groups) {
+   $groupMap[$g.Id] = $g.DisplayName
+}
+$report = foreach ($method in $policy.AuthenticationMethodConfigurations) {
+   $targets = foreach ($target in $method.AdditionalProperties.includeTarget) {
+       $id = $target.id
+       $name = if ($groupMap.ContainsKey($id)) {
+           $groupMap[$id]
+       } else {
+           $id
+       }
+       "$name ($($target.targetType))"
+   }
+   [PSCustomObject]@{
+       MethodName  = $method.DisplayName
+       MethodId    = $method.Id
+       State       = $method.State
+       IncludeTargets = $targets -join "; "
+       Configuration = $method.AdditionalProperties | ConvertTo-Json -Depth 8 -Compress
+   }
+}
+$report | Export-Csv ".\AuthenticationMethodDetails.csv" -NoTypeInformation

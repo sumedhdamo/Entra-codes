@@ -1,0 +1,5 @@
+Get-MgOrganization | Export-Csv "C:\UBC-Tenant Information\Tenant.csv" -NoTypeInformation
+
+Get-MgSubscribedSku | Export-Csv "C:\UBC-Tenant Information\licenses.csv" -NoTypeInformation
+
+Get-MgDomain | Export-Csv "C:\UBC-Tenant Information\domain.csv" -NoTypeInformation
